@@ -27,8 +27,7 @@ local unescape = function(url)
     end)
 end
 
-local make_reader = function(uri)
-    local path = unescape(uri)
+local make_reader = function(path)
     local f = assert(io.open(FILE_ROOT .. path, 'rb'))
 
     -- TODO: additional attributes...
@@ -88,9 +87,11 @@ end)
 
 -- Loop over requested files
 for _, entry in pairs(splitlines(r.body)) do
-    -- Format: crc32 size uri name
+    -- Parse each line, format: crc32 size uri name
     local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
-    ZipStream:write(name, make_reader(uri))
+    local path = unescape(uri)
+
+    ZipStream:write(name, make_reader(path))
 end
 
 ZipStream:close()
