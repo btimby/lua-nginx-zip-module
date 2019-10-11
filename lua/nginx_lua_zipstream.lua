@@ -21,17 +21,18 @@ local splitlines = function(str)
     return lines
 end
 
-local hex_to_char = function(x)
-    return string.char(tonumber(x, 16))
-end
-  
 local unescape = function(url)
-    return url:gsub("%%(%x%x)", hex_to_char)
+    return url:gsub("%%(%x%x)", function(x)
+        return string.char(tonumber(x, 16))
+    end)
 end
 
 local make_reader = function(uri)
     local path = unescape(uri)
     local f = assert(io.open(FILE_ROOT .. path, 'rb'))
+
+    -- TODO: additional attributes...
+    -- http://moteus.github.io/ZipWriter/#FILE_DESCRIPTION
     local desc = {
         istext = true,
         isfile = true
@@ -62,9 +63,9 @@ local archive = r.header[HEADER_NAME]
 
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
--- TODO: may return an error?
+-- TODO: maybe return an error?
 if archive ~= 'zip' then
-    -- Copy headers from subrequest.
+    -- Copy headers and status from subrequest.
     ngx.headers = r.header
     ngx.status = r.status
     -- Proxy body and status code.
@@ -87,6 +88,7 @@ end)
 
 -- Loop over requested files
 for _, entry in pairs(splitlines(r.body)) do
+    -- Format: crc32 size uri name
     local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
     ZipStream:write(name, make_reader(uri))
 end
