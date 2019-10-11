@@ -30,7 +30,6 @@ function _M.new(self, o)
     -- TODO: I would rather URI in file list refer to nginx "location", but
     -- would need to learn how to stream subrequest responses (cosocket).
     o["file_root"] = o["file_root"] or "/files"
-    o["append"] = o["append"] or ''
     
     return setmetatable(o, mt)
 end
@@ -73,7 +72,7 @@ function _M.stream_files(self, r)
 
     -- Loop over requested files
     for _, entry in pairs(splitlines(r.body)) do
-        local crc, size, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
+        local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
         ZipStream:write(name, self:make_reader(uri))
     end
 
@@ -83,10 +82,9 @@ end
 function _M.subrequest(self)
     -- Do a subrequest to origin. This will proxy to upstream, but allow us to
     -- ispect the response.
-    -- TODO: need to append portion of URL matched by regex in nginx.conf
-    local r = ngx.location.capture(self.origin .. self.append)
+    local r = ngx.location.capture(self.origin)
 
-    -- The X-Sendfile header is our flavor of X-Accel-Redirect.
+    -- Get magic header.
     local archive = r.header[HEADER_NAME]
 
     -- If header value is not "zip", forward response downstream. We may
@@ -100,7 +98,7 @@ end
 
 function _M.pass()
     -- NOOP, we pass the request upstream.
-    ngx.exec(self.origin .. self.append)
+    ngx.exec(self.origin)
 end
 
 function _M.process(self)
