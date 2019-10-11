@@ -10,3 +10,6 @@ run: build
 		-v ${PWD}/fixtures:/files \
 		-ti zipstream
 
+.PHONY: check
+check:
+	luacheck --globals ngx -- lua/nginx_lua_zipstream.lua 
