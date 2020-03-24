@@ -20,6 +20,18 @@ METHOD_MAP['PUT'] = ngx.HTTP_PUT
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 -- Library functions
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+local proxy = function(r)
+    -- Copy headers and status from subrequest.
+    for n, v in pairs(r.header) do
+        ngx.header[n] = v
+    end
+
+    ngx.status = r.status
+    -- Proxy body and status code.
+    ngx.print(r.body)
+    ngx.exit(r.status)
+end
+
 local splitlines = function(str)
     local lines = {}
     for s in str:gmatch("[^\r\n]+") do
@@ -82,16 +94,25 @@ local archive = r.header[HEADER_NAME]
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
 -- TODO: maybe return an error?
-if archive ~= 'zip' then
-    ngx.log(ngx.WARN, 'Unsupported header ' .. HEADER_NAME .. ': ' .. archive)
-
-    -- Copy headers and status from subrequest.
-    ngx.headers = r.header
-    ngx.status = r.status
-    -- Proxy body and status code.
-    ngx.print(r.body)
-    ngx.exit(r.status)
+if (archive ~= 'zip') then
+    if (archive == nil) then
+        ngx.log(ngx.WARN, 'Missing header ' .. HEADER_NAME)
+    else
+        ngx.log(ngx.WARN, 'Unrecognized header ' .. HEADER_NAME .. ': ' .. archive)
+    end
+    proxy(r)
 end
+
+-- 2XX?
+if (math.floor(r.status / 100) ~= 2) then
+    proxy(r)
+end
+
+ngx.status = ngx.OK
+for n, v in pairs(r.header) do
+    ngx.header[n] = v
+end
+ngx.header[HEADER_NAME] = nil
 
 -- Set headers for a zip file download.
 ngx.header['Content-Type'] = 'application/zip'
