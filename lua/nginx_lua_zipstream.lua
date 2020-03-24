@@ -14,7 +14,7 @@ local METHODS = ngx.var.methods or 'GET POST'
 -- Library functions
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 local splitlines = function(str)
-    lines = {}
+    local lines = {}
     for s in str:gmatch("[^\r\n]+") do
         table.insert(lines, s)
     end
@@ -28,7 +28,12 @@ local unescape = function(url)
 end
 
 local make_reader = function(path)
-    local f = assert(io.open(FILE_ROOT .. path, 'rb'))
+    -- prepend file_root if specified.
+    if (FILE_ROOT ~= nil) then
+        path = FILE_ROOT .. path
+    end
+
+    local f = assert(io.open(path, 'rb'))
 
     -- TODO: additional attributes...
     -- http://moteus.github.io/ZipWriter/#FILE_DESCRIPTION
@@ -54,8 +59,9 @@ if not string.match(METHODS, method) then
 end
 
 -- Do a subrequest to origin. This will proxy to upstream, but allow us to
--- ispect the response.
-local r = ngx.location.capture(UPSTREAM)
+-- ispect the response. Ensure the method matches parent request, in which
+-- case the body (if a POST or PUT) will be forwarded.
+local r = ngx.location.capture(UPSTREAM, { method = method })
 
 -- Get magic header.
 local archive = r.header[HEADER_NAME]
