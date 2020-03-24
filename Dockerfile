@@ -9,5 +9,6 @@ RUN luarocks install bit32
 RUN luarocks install lzlib
 RUN luarocks install zipwriter
 RUN luarocks install nginx-lua-prometheus
+RUN luarocks install lua-resty-http
 
 EXPOSE 80:80

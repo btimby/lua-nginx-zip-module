@@ -4,7 +4,7 @@ build:
 
 .PHONY: run
 run: build
-	docker run -p 80:80 \
+	docker run -p 8080:80 \
 		-v ${PWD}/docker/nginx/conf.d:/etc/nginx/conf.d:ro \
 		-v ${PWD}/lua/nginx_lua_zipstream.lua:/usr/local/openresty/lualib/nginx_lua_zipstream.lua:ro \
 		-v ${PWD}/fixtures:/files \

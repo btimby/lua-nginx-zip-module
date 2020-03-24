@@ -1,4 +1,5 @@
 local ZipWriter = require('ZipWriter')
+local http = require('resty.http')
 
 -- Required arguments
 local UPSTREAM = ngx.var.upstream;
@@ -26,28 +27,6 @@ local splitlines = function(str)
         table.insert(lines, s)
     end
     return lines
-end
-
-local make_reader = function(path)
-    -- prepend file_root if specified.
-    if (FILE_ROOT ~= nil) then
-        path = FILE_ROOT .. path
-    end
-
-    local f = assert(io.open(path, 'rb'))
-
-    -- TODO: additional attributes...
-    -- http://moteus.github.io/ZipWriter/#FILE_DESCRIPTION
-    local desc = {
-        istext = true,
-        isfile = true
-    }
-
-    return desc, desc.isfile and function()
-        local chunk = f:read(CHUNK_SIZE)
-        if chunk then return chunk end
-        f:close()
-    end
 end
 
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -82,11 +61,15 @@ local archive = r.header[HEADER_NAME]
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
 -- TODO: maybe return an error?
-if archive ~= 'zip' then
-    ngx.log(ngx.WARN, 'Unsupported header ' .. HEADER_NAME .. ': ' .. archive)
+if (archive ~= 'zip') then
+    if (archive == nil) then
+        ngx.log(ngx.WARN, 'Missing header ' .. HEADER_NAME)
+    else
+        ngx.log(ngx.WARN, 'Unsupported header ' .. HEADER_NAME .. ': ' .. archive)
+    end
 
     -- Copy headers and status from subrequest.
-    ngx.headers = r.header
+    ngx.header = r.header
     ngx.status = r.status
     -- Proxy body and status code.
     ngx.print(r.body)
@@ -97,22 +80,75 @@ end
 ngx.header['Content-Type'] = 'application/zip'
 ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
 
--- Set up zip output.
-local ZipStream = ZipWriter.new()
 
--- The following creates a callback to write response incrementally.
-ZipStream:open_writer(function(chunk)
-    ngx.print(chunk)
-    ngx.flush()
-end)
+-- This function generates a zipfile and streams it to ngx.print().
+local stream_zip = function(r)
 
--- Loop over requested files
-for _, entry in pairs(splitlines(r.body)) do
-    -- Parse each line, format: crc32 size uri name
-    local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
-    local path = ngx.unescape_uri(uri)
+    -- This seems a bit backwards, but file I/O will block nginx's event loop.
+    -- When the event loop is blocked, no other requests can be handled. One
+    -- can add more workers, but if you have multiple requests for zip files
+    -- you end up blocking multiple workers. To get around this we read the
+    -- file using an HTTP request to localhost, nginx is configured to serve
+    -- us the raw file which we can read chunk by chunk and flush out to nginx.
+    local make_reader = function(path)
+        -- Set up our HTTP client.
+        local httpc = http.new()
+        httpc:connect('127.0.0.1', 80)
+        local res, err = httpc:request({
+            path = FILE_ROOT .. path,
+        })
 
-    ZipStream:write(name, make_reader(path))
+        -- Handle connection error.
+        if not res then
+            ngx.log(ngx.ERR, 'Error while requesting file: ' .. err);
+            ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+        end
+
+        -- Get a reader so we can incrementally read the file.
+        local reader = res.body_reader
+
+        -- The file description for use by ZipWriter.
+        local desc = {
+            istext = true,
+            isfile = true,
+        }
+
+        -- Finally return the file information and a function that will
+        -- return the file body chunk by chunk.
+        return desc, desc.isfile and function()
+            local chunk, err = reader(CHUNK_SIZE)
+            if err then
+                ngx.log(ngx.ERR, 'Failure reading file')
+                ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+            end
+            if chunk then
+                return chunk
+            end
+        end
+    end
+    
+    -- Set up zip output, use fastest method.
+    local ZipStream = ZipWriter.new({ level = ZipWriter.COMPRESSION_LEVEL.SPEED })
+
+    -- The following creates a callback to write response incrementally.
+    ZipStream:open_writer(function(chunk)
+        ngx.print(chunk)
+        ngx.flush(true)
+    end)
+
+    -- Loop over requested files
+    for _, entry in pairs(splitlines(r.body)) do
+        -- Parse each line, format: crc32 size uri name
+        local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
+        local path = ngx.unescape_uri(uri)
+
+        ZipStream:write(name, make_reader(path))
+    end
+
+    ZipStream:close()
 end
 
-ZipStream:close()
+-- Do the heavy lifting in a coroutine.
+ngx.thread.wait(
+    ngx.thread.spawn(stream_zip, r)
+)
