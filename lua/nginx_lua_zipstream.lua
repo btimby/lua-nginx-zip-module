@@ -124,7 +124,7 @@ local ZipStream = ZipWriter.new()
 -- The following creates a callback to write response incrementally.
 ZipStream:open_writer(function(chunk)
     ngx.print(chunk)
-    ngx.flush()
+    ngx.flush(true)
 end)
 
 -- Loop over requested files
@@ -137,3 +137,5 @@ for _, entry in pairs(splitlines(r.body)) do
 end
 
 ZipStream:close()
+
+ngx.exit(ngx.OK)
