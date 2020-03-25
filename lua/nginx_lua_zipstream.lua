@@ -116,7 +116,12 @@ local stream_zip = function(file_list)
         end
 
         -- Get a reader so we can incrementally read the file.
-        local reader = file.body_reader
+        local reader, readError = httpc:get_client_body_reader(CHUNK_SIZE)
+
+        if (readError) then
+            ngx.log(ngx.ERR, 'Error creating reader: ' .. readError)
+            ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+        end
 
         -- The file description for use by ZipWriter.
         local desc = {
@@ -127,7 +132,7 @@ local stream_zip = function(file_list)
         -- Finally return the file information and a function that will
         -- return the file body chunk by chunk.
         return desc, desc.isfile and function()
-            local chunk, readErr = reader(65535)
+            local chunk, readErr = reader(CHUNK_SIZE)
             if readErr then
                 ngx.log(ngx.ERR, 'Failure reading file: ' .. readErr)
                 ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
