@@ -1,9 +1,11 @@
 local ZipWriter = require('ZipWriter')
 local http = require('resty.http')
+local resty_url = require('resty.url');
 
 -- Required arguments
 local UPSTREAM = ngx.var.upstream;
-local FILE_ROOT = ngx.var.file_root;
+local FILE_URL = ngx.var.file_url;
+local FILE_URL_PARTS = resty_url.parse(FILE_URL)
 
 -- Optional arguments
 local HEADER_NAME = ngx.var.header or 'X-Archive-Files'
@@ -53,10 +55,10 @@ ngx.req.read_body()
 -- Do a subrequest to origin. This will proxy to upstream, but allow us to
 -- ispect the response. Ensure the method matches parent request, in which
 -- case the body (if a POST or PUT) will be forwarded.
-local r = ngx.location.capture(UPSTREAM, { method = method_id })
+local res = ngx.location.capture(UPSTREAM, { method = method_id })
 
 -- Get magic header.
-local archive = r.header[HEADER_NAME]
+local archive = res.header[HEADER_NAME]
 
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
@@ -69,11 +71,11 @@ if (archive ~= 'zip') then
     end
 
     -- Copy headers and status from subrequest.
-    ngx.header = r.header
-    ngx.status = r.status
+    ngx.header = res.header
+    ngx.status = res.status
     -- Proxy body and status code.
-    ngx.print(r.body)
-    ngx.exit(r.status)
+    ngx.print(res.body)
+    ngx.exit(res.status)
 end
 ngx.header[HEADER_NAME] = nil
 
@@ -82,7 +84,7 @@ ngx.header['Content-Type'] = 'application/zip'
 ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
 
 -- This function generates a zipfile and streams it to ngx.print().
-local stream_zip = function(r)
+local stream_zip = function(file_list)
 
     -- This seems a bit backwards, but file I/O will block nginx's event loop.
     -- When the event loop is blocked, no other requests can be handled. One
@@ -99,20 +101,22 @@ local stream_zip = function(r)
         -- Set up our HTTP client.
         local httpc = http.new()
         -- TODO: URL should be configurable.
-        httpc:connect('127.0.0.1', 80)
-        local res, err = httpc:request({
+        ngx.log(ngx.ERR, 'URL: ' .. FILE_URL_PARTS.host .. ':' .. FILE_URL_PARTS.port)
+        ngx.log(ngx.ERR, 'Path: ' .. FILE_URL_PARTS.path .. path)
+        httpc:connect(FILE_URL_PARTS.host, FILE_URL_PARTS.port)
+        local file, httpErr = httpc:request({
             -- TODO: encode path parts
-            path = FILE_ROOT .. path,
+            path = FILE_URL_PARTS.path .. path,
         })
 
         -- Handle connection error.
-        if not res then
-            ngx.log(ngx.ERR, 'Error while requesting file: ' .. err);
+        if not file then
+            ngx.log(ngx.ERR, 'Error while requesting file: ' .. httpErr);
             ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
         end
 
         -- Get a reader so we can incrementally read the file.
-        local reader = res.body_reader
+        local reader = file.body_reader
 
         -- The file description for use by ZipWriter.
         local desc = {
@@ -123,9 +127,9 @@ local stream_zip = function(r)
         -- Finally return the file information and a function that will
         -- return the file body chunk by chunk.
         return desc, desc.isfile and function()
-            local chunk, err = reader(CHUNK_SIZE)
-            if err then
-                ngx.log(ngx.ERR, 'Failure reading file')
+            local chunk, readErr = reader(CHUNK_SIZE)
+            if readErr then
+                ngx.log(ngx.ERR, 'Failure reading file: ' .. readErr)
                 ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
             end
             if chunk then
@@ -149,14 +153,17 @@ local stream_zip = function(r)
     --
     -- The error is:
     --
-    --2020/03/25 03:36:23 [error] 6#6: *10 lua user thread aborted: runtime error: attempt to yield across C-call boundary
+    --2020/03/25 03:36:23 [error] 6#6: *10 lua user thread aborted: runtime error: attempt to yield across C-call
+    --  boundary
     --stack traceback:
     --coroutine 0:
     --	[C]: in function 'write'
     --	/usr/local/openresty/luajit/share/lua/5.1/ZipWriter.lua:562: in function 'write'
     --	/usr/local/openresty/luajit/share/lua/5.1/ZipWriter.lua:952: in function 'write'
-    --	/usr/local/openresty/lualib/nginx_lua_zipstream.lua:148: in function </usr/local/openresty/lualib/nginx_lua_zipstream.lua:86>
-    -- while sending to client, client: 172.17.0.1, server: localhost, request: "GET /zipstream/foobar HTTP/1.1", host: "localhost:8080"
+    --	/usr/local/openresty/lualib/nginx_lua_zipstream.lua:148: in function
+    --    </usr/local/openresty/lualib/nginx_lua_zipstream.lua:86>
+    -- while sending to client, client: 172.17.0.1, server: localhost, request: "GET /zipstream/foobar HTTP/1.1",
+    --   host: "localhost:8080"
     --
     -- The [C] call above is zlib which invokes our callback with a chunk of compressed
     -- data.
@@ -168,7 +175,7 @@ local stream_zip = function(r)
     -- TODO: We should enforce a limit on total file size. We can loop over this
     -- list that upstream sent us and sum the size and conditionally throw an error.
     -- Loop over requested files
-    for _, entry in pairs(splitlines(r.body)) do
+    for _, entry in pairs(splitlines(file_list)) do
         -- Parse each line, format: crc32 size uri name
         local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
         local path = ngx.unescape_uri(uri)
@@ -182,4 +189,4 @@ end
 -- Do the heavy lifting in a coroutine. No need to wait, our entry thread / request
 -- will not terminate until all light threads are done. If you need to spawn additional
 -- coroutines, you can do so here.
-ngx.thread.spawn(stream_zip, r)
+ngx.thread.spawn(stream_zip, res.body)
