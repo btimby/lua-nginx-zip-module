@@ -127,7 +127,7 @@ local stream_zip = function(file_list)
         -- Finally return the file information and a function that will
         -- return the file body chunk by chunk.
         return desc, desc.isfile and function()
-            local chunk, readErr = reader(CHUNK_SIZE)
+            local chunk, readErr = reader(65535)
             if readErr then
                 ngx.log(ngx.ERR, 'Failure reading file: ' .. readErr)
                 ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
