@@ -100,9 +100,7 @@ local stream_zip = function(file_list)
     local make_reader = function(path)
         -- Set up our HTTP client.
         local httpc = http.new()
-        -- TODO: URL should be configurable.
-        ngx.log(ngx.ERR, 'URL: ' .. FILE_URL_PARTS.host .. ':' .. FILE_URL_PARTS.port)
-        ngx.log(ngx.ERR, 'Path: ' .. FILE_URL_PARTS.path .. path)
+
         httpc:connect(FILE_URL_PARTS.host, FILE_URL_PARTS.port)
         local file, httpErr = httpc:request({
             -- TODO: encode path parts
@@ -115,19 +113,14 @@ local stream_zip = function(file_list)
             ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
         end
 
-        -- Get a reader so we can incrementally read the file.
-        local reader, readError = httpc:get_client_body_reader(CHUNK_SIZE)
-
-        if (readError) then
-            ngx.log(ngx.ERR, 'Error creating reader: ' .. readError)
-            ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
-        end
-
         -- The file description for use by ZipWriter.
         local desc = {
             istext = true,
             isfile = true,
         }
+
+        -- Get a reader so we can incrementally read the file.
+        local reader = file.body_reader
 
         -- Finally return the file information and a function that will
         -- return the file body chunk by chunk.
