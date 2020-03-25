@@ -52,9 +52,8 @@ end
 -- be forwarded in the subrequest.
 ngx.req.read_body()
 
--- Do a subrequest to origin. This will proxy to upstream, but allow us to
--- ispect the response. Ensure the method matches parent request, in which
--- case the body (if a POST or PUT) will be forwarded.
+-- Do a subrequest to upstream and allow us to inspect the response. Use the same HTTP
+-- method as this request in which case the body (if a POST or PUT) will be forwarded.
 local res = ngx.location.capture(UPSTREAM, { method = method_id })
 
 -- Get magic header.
@@ -77,6 +76,7 @@ if (archive ~= 'zip') then
     ngx.print(res.body)
     ngx.exit(res.status)
 end
+-- Remove magic header
 ngx.header[HEADER_NAME] = nil
 
 -- Set headers for a zip file download.
@@ -91,12 +91,13 @@ local stream_zip = function(file_list)
     -- can add more workers, but if you have multiple requests for zip files
     -- you end up blocking multiple workers. To get around this we read the
     -- file using an HTTP request to localhost, nginx is configured to serve
-    -- us the raw file which we can read chunk by chunk and flush out to nginx.
+    -- us the raw file which we can read chunk by chunk and flush out in
+    -- compressed form to the client
     --
-    -- Thinking about this I feel it is an elegant solution. The data is read
-    -- by nginx and never leaves nginx. We are leveraging it's file I/O capability
-    -- even though nginx-lua/openresty does not expose an API for such. Lucky
-    -- for us, it DOES expose a cosocket API that makes this possible.
+    -- I feel this is an elegant solution. The data is read by nginx and never
+    -- leaves nginx. We are leveraging it's file I/O capability even though
+    -- nginx-lua/openresty does not expose an API for such. Lucky for us, it DOES
+    -- expose a cosocket API that makes this possible.
     local make_reader = function(path)
         -- Set up our HTTP client.
         local httpc = http.new()
@@ -163,8 +164,7 @@ local stream_zip = function(file_list)
     -- while sending to client, client: 172.17.0.1, server: localhost, request: "GET /zipstream/foobar HTTP/1.1",
     --   host: "localhost:8080"
     --
-    -- The [C] call above is zlib which invokes our callback with a chunk of compressed
-    -- data.
+    -- The [C] call above is zlib which invokes our callback with a chunk of compresse data.
     ZipStream:open_writer(function(chunk)
         ngx.print(chunk)
         ngx.flush()
