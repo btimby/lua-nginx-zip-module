@@ -21,18 +21,6 @@ METHOD_MAP['PUT'] = ngx.HTTP_PUT
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 -- Library functions
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-local proxy = function(r)
-    -- Copy headers and status from subrequest.
-    for n, v in pairs(r.header) do
-        ngx.header[n] = v
-    end
-
-    ngx.status = r.status
-    -- Proxy body and status code.
-    ngx.print(r.body)
-    ngx.exit(r.status)
-end
-
 local splitlines = function(str)
     local lines = {}
     for s in str:gmatch("[^\r\n]+") do
@@ -93,7 +81,6 @@ ngx.header[HEADER_NAME] = nil
 ngx.header['Content-Type'] = 'application/zip'
 ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
 
-
 -- This function generates a zipfile and streams it to ngx.print().
 local stream_zip = function(r)
 
@@ -103,11 +90,18 @@ local stream_zip = function(r)
     -- you end up blocking multiple workers. To get around this we read the
     -- file using an HTTP request to localhost, nginx is configured to serve
     -- us the raw file which we can read chunk by chunk and flush out to nginx.
+    --
+    -- Thinking about this I feel it is an elegant solution. The data is read
+    -- by nginx and never leaves nginx. We are leveraging it's file I/O capability
+    -- even though nginx-lua/openresty does not expose an API for such. Lucky
+    -- for us, it DOES expose a cosocket API that makes this possible.
     local make_reader = function(path)
         -- Set up our HTTP client.
         local httpc = http.new()
+        -- TODO: URL should be configurable.
         httpc:connect('127.0.0.1', 80)
         local res, err = httpc:request({
+            -- TODO: encode path parts
             path = FILE_ROOT .. path,
         })
 
@@ -139,16 +133,40 @@ local stream_zip = function(r)
             end
         end
     end
-    
+
     -- Set up zip output, use fastest method.
     local ZipStream = ZipWriter.new({ level = ZipWriter.COMPRESSION_LEVEL.SPEED })
 
-    -- The following creates a callback to write response incrementally.
+    -- NOTE: it is critically important that the callback does not yield. It is called
+    -- by a C function, and yielding across a C boundary is not permitted in lua. Any
+    -- I/O operation that would possibly be put to sleep is not permitted. For example
+    -- passing true to flush below causes this to fail because true waits for the flush
+    -- to complete (I/O sleep). If this becomes a problem, the code could be refactored
+    -- to write to a queue with a separate coroutine writing / flushing.
+    --
+    -- I ran this 100 times with flush(true) and it failed 3 times. I ran it 1000 times
+    -- with flush() and it failed 0 times.
+    --
+    -- The error is:
+    --
+    --2020/03/25 03:36:23 [error] 6#6: *10 lua user thread aborted: runtime error: attempt to yield across C-call boundary
+    --stack traceback:
+    --coroutine 0:
+    --	[C]: in function 'write'
+    --	/usr/local/openresty/luajit/share/lua/5.1/ZipWriter.lua:562: in function 'write'
+    --	/usr/local/openresty/luajit/share/lua/5.1/ZipWriter.lua:952: in function 'write'
+    --	/usr/local/openresty/lualib/nginx_lua_zipstream.lua:148: in function </usr/local/openresty/lualib/nginx_lua_zipstream.lua:86>
+    -- while sending to client, client: 172.17.0.1, server: localhost, request: "GET /zipstream/foobar HTTP/1.1", host: "localhost:8080"
+    --
+    -- The [C] call above is zlib which invokes our callback with a chunk of compressed
+    -- data.
     ZipStream:open_writer(function(chunk)
         ngx.print(chunk)
-        ngx.flush(true)
+        ngx.flush()
     end)
 
+    -- TODO: We should enforce a limit on total file size. We can loop over this
+    -- list that upstream sent us and sum the size and conditionally throw an error.
     -- Loop over requested files
     for _, entry in pairs(splitlines(r.body)) do
         -- Parse each line, format: crc32 size uri name
@@ -161,7 +179,7 @@ local stream_zip = function(r)
     ZipStream:close()
 end
 
--- Do the heavy lifting in a coroutine.
-ngx.thread.wait(
-    ngx.thread.spawn(stream_zip, r)
-)
+-- Do the heavy lifting in a coroutine. No need to wait, our entry thread / request
+-- will not terminate until all light threads are done. If you need to spawn additional
+-- coroutines, you can do so here.
+ngx.thread.spawn(stream_zip, r)
