@@ -134,7 +134,10 @@ local stream_zip = function(file_list)
     end
 
     -- Set up zip output, use fastest method.
-    local ZipStream = ZipWriter.new({ level = ZipWriter.COMPRESSION_LEVEL.SPEED })
+    local ZipStream = ZipWriter.new({
+        utf8 = true,
+        level = ZipWriter.COMPRESSION_LEVEL.SPEED
+    })
 
     -- NOTE: it is critically important that the callback does not yield. It is called
     -- by a C function, and yielding across a C boundary is not permitted in lua. Any

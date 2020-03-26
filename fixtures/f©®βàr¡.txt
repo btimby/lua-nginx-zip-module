@@ -1,0 +1,1 @@
+Some ASCII data in a file with a non-ASCII name.
