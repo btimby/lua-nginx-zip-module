@@ -1,14 +1,12 @@
-FROM openresty/openresty:centos
+FROM openresty/openresty:alpine-fat
 
-RUN yum install -y gcc zlib-devel && \
-    yum clean all && \
-    rm -rf /var/cache/yum
+RUN apk add --update-cache git build-base zlib-dev && \
+    rm -rf /var/cache/apk/*
 
-RUN opm get 3scale/lua-resty-url
 RUN luarocks install struct
 RUN luarocks install bit32
-RUN luarocks install lzlib
+RUN luarocks install lzlib ZLIB_DIR=/ ZLIB_INCDIR=/usr/include
 RUN luarocks install zipwriter
-RUN luarocks install lua-resty-http
+RUN luarocks install lua-resty-httpipe
 
 EXPOSE 80:80

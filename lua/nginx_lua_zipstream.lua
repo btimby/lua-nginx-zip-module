@@ -1,11 +1,9 @@
 local ZipWriter = require('ZipWriter')
-local http = require('resty.http')
-local resty_url = require('resty.url');
+local http = require('resty.httpipe')
 
 -- Required arguments
 local UPSTREAM = ngx.var.upstream;
 local FILE_URL = ngx.var.file_url;
-local FILE_URL_PARTS = resty_url.parse(FILE_URL)
 
 -- Optional arguments
 local HEADER_NAME = ngx.var.header or 'X-Archive-Files'
@@ -97,18 +95,20 @@ local stream_zip = function(file_list)
     -- by nginx and never leaves nginx. We are leveraging it's file I/O capability
     -- even though nginx-lua/openresty does not expose an API for such. Lucky
     -- for us, it DOES expose a cosocket API that makes this possible.
-    local make_reader = function(path)
+    local make_reader = function(fn)
         -- Set up our HTTP client.
-        local httpc = http.new()
+        local htp = http.new()
 
-        httpc:connect(FILE_URL_PARTS.host, FILE_URL_PARTS.port)
-        local file, httpErr = httpc:request({
-            -- TODO: encode path parts
-            path = FILE_URL_PARTS.path .. path,
+        local scheme, host, port, path, args = unpack(htp:parse_uri(FILE_URL))
+        local res, htpErr = htp:request(host, port, {
+            method = 'GET',
+            path = path .. fn,
+            stream = true
         })
+        local reader = res.body_reader
 
         -- Handle connection error.
-        if not file then
+        if htpErr then
             ngx.log(ngx.ERR, 'Error while requesting file: ' .. httpErr);
             ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
         end
@@ -118,9 +118,6 @@ local stream_zip = function(file_list)
             istext = true,
             isfile = true,
         }
-
-        -- Get a reader so we can incrementally read the file.
-        local reader = file.body_reader
 
         -- Finally return the file information and a function that will
         -- return the file body chunk by chunk.
