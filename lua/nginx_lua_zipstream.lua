@@ -84,18 +84,12 @@ ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
 -- This function generates a zipfile and streams it to ngx.print().
 local stream_zip = function(file_list)
 
-    -- This seems a bit backwards, but file I/O will block nginx's event loop.
-    -- When the event loop is blocked, no other requests can be handled. One
-    -- can add more workers, but if you have multiple requests for zip files
-    -- you end up blocking multiple workers. To get around this we read the
-    -- file using an HTTP request to localhost, nginx is configured to serve
-    -- us the raw file which we can read chunk by chunk and flush out to nginx.
-    --
-    -- Thinking about this I feel it is an elegant solution. The data is read
-    -- by nginx and never leaves nginx. We are leveraging it's file I/O capability
-    -- even though nginx-lua/openresty does not expose an API for such. Lucky
-    -- for us, it DOES expose a cosocket API that makes this possible.
-    local make_reader = function(fn)
+    -- Perform an HTTP request to localhost. This will fetch the file body in
+    -- an asynchronous manner, using a cosocket. This function returns a reader
+    -- object that can read chunks of data from the "file". I also returns an
+    -- err flag if the request was unsuccessful or if the response code is not
+    -- 2XX.
+    local start_request = function(fn)
         -- Set up our HTTP client.
         local htp = http.new()
 
@@ -105,14 +99,24 @@ local stream_zip = function(file_list)
             path = path .. fn,
             stream = true
         })
-        local reader = res.body_reader
 
         -- Handle connection error.
         if htpErr then
             ngx.log(ngx.ERR, 'Error while requesting file: ' .. httpErr);
-            ngx.exit(ngx.HTTP_INTERNAL_SERVER_ERROR)
+            return nil, httpErr
         end
 
+        if (res.status < 200 or res.status > 299) then
+            ngx.log(ngx.ERR, 'Error while requesting file, status: ' .. res.status);
+            return nil, res.status
+        end
+
+        return res.body_reader, nil
+    end
+
+    -- Accepts an HTTP response reader and returns a file description as well
+    -- as a chunk reader function.
+    local make_reader = function(reader)
         -- The file description for use by ZipWriter.
         local desc = {
             istext = true,
@@ -178,7 +182,12 @@ local stream_zip = function(file_list)
         local _, _, uri, name = string.match(entry, "(.-)%s(.-)%s(.-)%s(.*)")
         local path = ngx.unescape_uri(uri)
 
-        ZipStream:write(name, make_reader(path))
+        reader, err = start_request(path)
+
+        -- If there was an error reading the file, skip it.
+        if (err == nil) then
+            ZipStream:write(name, make_reader(reader))
+        end
     end
 
     ZipStream:close()
