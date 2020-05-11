@@ -58,6 +58,11 @@ local res = ngx.location.capture(UPSTREAM, { method = method_id })
 -- Get magic header.
 local archive = res.header[HEADER_NAME]
 
+-- Pass along headers
+for k, v in pairs(res.header) do
+    ngx.header[k] = v
+end
+
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
 -- TODO: maybe return an error?
@@ -69,17 +74,21 @@ if (archive ~= 'zip') then
     end
 
     -- Copy headers and status from subrequest.
-    ngx.header = res.header
     ngx.status = res.status
+
     -- Proxy body and status code.
     ngx.print(res.body)
     ngx.exit(res.status)
 end
 ngx.header[HEADER_NAME] = nil
 
--- Set headers for a zip file download.
-ngx.header['Content-Type'] = 'application/zip'
-ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
+-- Set headers for a zip file download (if not present).
+if (ngx.header['Content-Type'] == nil) then
+    ngx.header['Content-Type'] = 'application/zip'
+end
+if (ngx.header['Content-Disposition'] == nil) then
+    ngx.header['Content-Disposition'] = 'attachment; filename="' .. ZIPNAME .. '"'
+end
 
 -- This function generates a zipfile and streams it to ngx.print().
 local stream_zip = function(file_list)
