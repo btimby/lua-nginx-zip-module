@@ -105,14 +105,15 @@ local stream_zip = function(file_list)
         local scheme, host, port, path, args = unpack(htp:parse_uri(FILE_URL))
         local res, htpErr = htp:request(host, port, {
             method = 'GET',
-            path = path .. fn,
+            -- The 0 flag below will preserve / chars in path.
+            path = path .. ngx.escape_uri(fn, 0),
             stream = true
         })
 
         -- Handle connection error.
         if htpErr then
-            ngx.log(ngx.ERR, 'Error while requesting file: ' .. httpErr);
-            return nil, httpErr
+            ngx.log(ngx.ERR, 'Error while requesting file: ' .. htpErr);
+            return nil, htpErr
         end
 
         if (res.status < 200 or res.status > 299) then
@@ -200,6 +201,9 @@ local stream_zip = function(file_list)
     end
 
     ZipStream:close()
+
+    ngx.flush(true)
+    ngx.exit(ngx.HTTP_OK)
 end
 
 -- Do the heavy lifting in a coroutine. No need to wait, our entry thread / request
