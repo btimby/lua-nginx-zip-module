@@ -135,8 +135,6 @@ local stream_zip = function(file_list)
                 ZipWriter.NIX_FILE_ATTR.IWUSR,
                 ZipWriter.NIX_FILE_ATTR.IRGRP,
                 ZipWriter.NIX_FILE_ATTR.IWGRP,
-                ZipWriter.NIX_FILE_ATTR.IROTH,
-                ZipWriter.NIX_FILE_ATTR.IWOTH,
 
                 -- DOS: normal, changed since last archive.
                 ZipWriter.DOS_FILE_ATTR.ARCH,
