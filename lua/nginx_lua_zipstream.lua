@@ -129,7 +129,7 @@ local stream_zip = function(file_list)
             isdir = false,
             platform = 'unix',
             exattrib = {
-                -- unix permissions: "-rw-rw-rw-""
+                -- unix permissions: "-rw-rw----""
                 ZipWriter.NIX_FILE_ATTR.IFREG,
                 ZipWriter.NIX_FILE_ATTR.IRUSR,
                 ZipWriter.NIX_FILE_ATTR.IWUSR,
