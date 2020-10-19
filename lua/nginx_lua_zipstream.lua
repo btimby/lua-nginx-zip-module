@@ -58,11 +58,6 @@ local res = ngx.location.capture(UPSTREAM, { method = method_id })
 -- Get magic header.
 local archive = res.header[HEADER_NAME]
 
--- Pass along headers
-for k, v in pairs(res.header) do
-    ngx.header[k] = v
-end
-
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
 -- TODO: maybe return an error?
@@ -131,6 +126,20 @@ local stream_zip = function(file_list)
         local desc = {
             istext = true,
             isfile = true,
+            isdir = false,
+            platform = 'unix',
+            exattrib = {
+                -- unix permissions: "-rw-rw----""
+                ZipWriter.NIX_FILE_ATTR.IFREG,
+                ZipWriter.NIX_FILE_ATTR.IRUSR,
+                ZipWriter.NIX_FILE_ATTR.IWUSR,
+                ZipWriter.NIX_FILE_ATTR.IRGRP,
+                ZipWriter.NIX_FILE_ATTR.IWGRP,
+
+                -- DOS: normal, changed since last archive.
+                ZipWriter.DOS_FILE_ATTR.ARCH,
+                ZipWriter.DOS_FILE_ATTR.NORMAL,
+            },
         }
 
         -- Finally return the file information and a function that will
