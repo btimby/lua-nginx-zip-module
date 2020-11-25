@@ -61,7 +61,7 @@ local archive = res.header[HEADER_NAME]
 -- If header value is not "zip", forward response downstream. We may
 -- support other archive formats in the future.
 -- TODO: maybe return an error?
-if (archive ~= 'zip') then
+if (res.status ~= 200 or archive ~= 'zip') then
     if (archive == nil) then
         ngx.log(ngx.WARN, 'Missing header ' .. HEADER_NAME)
     else
@@ -69,6 +69,7 @@ if (archive ~= 'zip') then
     end
 
     -- Copy headers and status from subrequest.
+    ngx.header['Content-Type'] = res.header['Content-Type']
     ngx.status = res.status
 
     -- Proxy body and status code.
